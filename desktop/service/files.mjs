@@ -6,6 +6,7 @@ import path from 'node:path';
 import { expandHome, json, publicError, realFile, secret, within } from './util.mjs';
 import { isMacOS } from './platform.mjs';
 import { serveReport } from './report-chrome.mjs';
+import { knowledgeRefAllowed, knowledgeExcluded } from './knowledge/providers.mjs';
 
 const mime = {
   '.html': 'text/html; charset=utf-8', '.htm': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.mjs': 'text/javascript; charset=utf-8',
@@ -93,6 +94,12 @@ export class Files {
     for (const [token, value] of this.grants) if (value === root) return token;
     const token = secret(); this.grants.set(token, root); return token;
   }
+  knowledgeUrl(root, ref) {
+    this.knowledgeGrants ||= new Map();
+    let token = this.knowledgeGrants.get(root);
+    if (!token) { token = secret(); this.knowledgeGrants.set(root, token); this.grants.set(token, root); }
+    return `${this.origin}/view/${token}/${encodePath(ref)}`;
+  }
   url(file) {
     const absolute = path.resolve(file);
     const relative = path.relative(this.repo, absolute);
@@ -127,10 +134,10 @@ export class Files {
     if (['.html', '.htm', '.pdf'].includes(ext)) return { ...base, kind: 'document', url: this.url(actual) };
     if (/^image\//.test(mime[ext] || '')) return { ...base, kind: 'image', url: this.url(actual) };
     if (/^(video|audio)\//.test(mime[ext] || '')) return { ...base, kind: mime[ext].split('/')[0], url: this.url(actual) };
-    if (textExtensions.has(ext) || info.size === 0 || path.basename(actual).startsWith('.env')) {
+    if (textExtensions.has(ext) || ext === '.markdown' || info.size === 0 || path.basename(actual).startsWith('.env')) {
       if (info.size > 2 * 1024 * 1024) return { ...base, kind: 'unsupported', reason: 'This text file is larger than the 2 MB preview limit.' };
       const bytes = await readFile(actual);
-      return { ...base, kind: 'text', text: bytes.toString('utf8'), ...(ext === '.md' ? { revision: createHash('sha256').update(bytes).digest('hex'), url: this.url(actual) } : {}) };
+      return { ...base, kind: 'text', text: bytes.toString('utf8'), ...(['.md', '.markdown'].includes(ext) ? { revision: createHash('sha256').update(bytes).digest('hex'), url: this.url(actual) } : {}) };
     }
     return { ...base, kind: 'unsupported', reason: 'Open this file in its desktop application.' };
   }
@@ -169,6 +176,8 @@ export class Files {
     const relative = decodeURIComponent(match[2]).replaceAll('\\', '/');
     if (relative.split('/').some(secretPart)) throw Object.assign(new Error('Private application files cannot be loaded by reports'), { status: 403 });
     const root = scoped ? scoped.root : this.grants.get(match[1]);
+    const knowledge = this.knowledgeGrants?.get(root) === match[1];
+    if (knowledge && !knowledgeRefAllowed(relative)) throw Object.assign(new Error('Document non autorisé'), { status: 403 });
     let fileRoot = root, filePath = relative;
     if (scoped) {
       const folder = !scoped.prefix || scoped.prefix.endsWith('/');
@@ -182,6 +191,7 @@ export class Files {
     }
     // Resolve links against the allowed folder, not the repository root.
     const { file, info } = await realFile(fileRoot, filePath);
+    if (knowledge && (!knowledgeRefAllowed(path.relative(root, file)) || path.relative(root, file).split(path.sep).some(knowledgeExcluded))) throw Object.assign(new Error('Document non autorisé'), { status: 403 });
     if (!info.isFile()) throw Object.assign(new Error('File not found'), { status: 404 });
     const headers = { 'Referrer-Policy': 'no-referrer', 'Access-Control-Allow-Origin': this.uiOrigin, 'Cross-Origin-Resource-Policy': 'cross-origin' };
     const document = /\.(html?|svg)$/i.test(file), html = /\.html?$/i.test(file);

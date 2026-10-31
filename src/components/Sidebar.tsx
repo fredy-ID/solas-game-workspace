@@ -1,6 +1,6 @@
 import type { RefObject } from 'react'
 import type { WorkspaceEntity } from '../types'
-import { entityHash } from '../lib/route'
+import { entityHash, knowledgeHash } from '../lib/route'
 import { categoryIcon } from '../lib/categories'
 import { contentUrl } from '../desktop/client'
 import MakLogo from './MakLogo'
@@ -11,6 +11,7 @@ interface SidebarProps {
   pinned: WorkspaceEntity[]
   grouped: Map<string, WorkspaceEntity[]>
   activeId: string | null
+  activeModule?: string
   query: string
   onQuery: (q: string) => void
   searchRef: RefObject<HTMLInputElement | null>
@@ -45,6 +46,7 @@ export default function Sidebar({
   pinned,
   grouped,
   activeId,
+  activeModule,
   query,
   onQuery,
   searchRef,
@@ -101,6 +103,7 @@ export default function Sidebar({
       </div>
 
       <nav className="sidebar-list">
+        <a className={`sidebar-item${activeModule === 'knowledge' ? ' active' : ''}`} href={knowledgeHash()} aria-current={activeModule === 'knowledge' ? 'page' : undefined}><span className="item-icon" aria-hidden="true">▤</span><span className="item-text">Knowledge Hub</span></a>
         {pinned.length > 0 && (
           <div>
             <div className="sidebar-section">

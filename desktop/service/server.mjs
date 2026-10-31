@@ -22,6 +22,7 @@ import { McpInventory } from './mcp.mjs';
 import { body, equalSecret, json, publicError, readJson, realFile, saveJson, secret } from './util.mjs';
 import { ProjectAdapterRegistry } from './project-adapters/registry.mjs';
 import { KnowledgeManager, MarkdownKnowledgeProvider } from './knowledge/providers.mjs';
+import { KnowledgeHub } from './modules/knowledge/hub.mjs';
 import { IntegrationManager } from './integrations/manager.mjs';
 import { MobileDictation } from './mobile-dictation.mjs';
 import { MobileGateway } from './mobile.mjs';
@@ -47,6 +48,7 @@ export async function createService({ repo, uiDir, stateDir, token = secret(), n
   const knowledgeSources = await readJson(path.join(stateDir, 'knowledge-sources.json'), []);
   const knowledgeProviders = (Array.isArray(knowledgeSources) ? knowledgeSources : []).filter(item => typeof item?.root === 'string').map(item => new MarkdownKnowledgeProvider(item.root, { id: item.id, label: item.label }));
   const knowledge = new KnowledgeManager(library, knowledgeProviders);
+  const knowledgeHub = new KnowledgeHub(stateDir, knowledgeSources, knowledge, files);
   const projects = new ProjectAdapterRegistry();
   const integrations = await new IntegrationManager(stateDir).init();
   const mcp = new McpInventory(repo, mcpOptions);
@@ -253,6 +255,10 @@ export async function createService({ repo, uiDir, stateDir, token = secret(), n
           return json(response, 200, selected ? await projects.capabilities(selected) : { matches: [] });
         }
         if (method === 'GET' && url.pathname === '/api/knowledge/providers') return json(response, 200, knowledge.list());
+        if (url.pathname === '/api/knowledge/sources' && method === 'GET') return json(response, 200, knowledgeHub.list());
+        if (url.pathname === '/api/knowledge/sources' && method === 'POST') return json(response, 200, await knowledgeHub.connect(data));
+        if (url.pathname === '/api/knowledge/tree' && method === 'GET') return json(response, 200, await knowledgeHub.tree(url.searchParams.get('provider')));
+        if (url.pathname === '/api/knowledge/create' && method === 'POST') return json(response, 201, await knowledgeHub.create(data));
         if (method === 'GET' && url.pathname === '/api/knowledge/search') return json(response, 200, await knowledge.search(url.searchParams.get('q') || '', url.searchParams.get('provider')));
         if (method === 'GET' && url.pathname === '/api/knowledge/document') return json(response, 200, await knowledge.retrieve(url.searchParams.get('provider') || '', url.searchParams.get('ref') || '', url.searchParams.get('offset')));
         if (method === 'GET' && url.pathname === '/api/integrations') return json(response, 200, { providers: integrations.list(), bindings: integrations.bindings.map(({ providerId, externalId, workspaceId, boundAt }) => ({ providerId, externalId, workspaceId, boundAt })) });
@@ -303,9 +309,9 @@ export async function createService({ repo, uiDir, stateDir, token = secret(), n
           native({ type: 'recycle-file', path: file });
           return json(response, 200, { requested: true, path: file });
         }
-        if (method === 'GET' && url.pathname === '/api/preview') return json(response, 200, await files.preview(url.searchParams.get('path') || ''));
+        if (method === 'GET' && url.pathname === '/api/preview') return json(response, 200, url.searchParams.has('provider') ? await knowledgeHub.preview(url.searchParams.get('provider'), url.searchParams.get('ref')) : await files.preview(url.searchParams.get('path') || ''));
         if (method === 'POST' && url.pathname === '/api/files/markdown') {
-          const preview = await files.saveMarkdown(data); await integrations.publish('artifact', { kind: 'updated', path: preview.path, name: preview.name }); broadcast('workspace-changed', {});
+          const preview = await (data.provider ? knowledgeHub.save(data) : files.saveMarkdown(data)); await integrations.publish('artifact', { kind: 'updated', path: preview.path, name: preview.name }); broadcast('workspace-changed', {});
           return json(response, 200, preview);
         }
         if (method === 'POST' && url.pathname === '/api/settings') {

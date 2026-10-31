@@ -13,6 +13,7 @@ import { contentUrl, isDesktop } from './desktop/client'
 const Compare3D = lazy(() => import('./components/Compare3D'))
 const ReportViewer = lazy(() => import('./components/ReportViewer'))
 const EditableCard = lazy(() => import('./components/EditableCard'))
+const KnowledgeHub = lazy(() => import('./modules/knowledge/KnowledgeHub'))
 
 // Freshly-touched work always burns at the top: sort by `updated` (falls back
 // to `created`), regardless of status — a report Mak just edited must not sink
@@ -31,6 +32,9 @@ export default function App() {
     () => isDesktop || localStorage.getItem('mak.sidebarCollapsed') === '1',
   )
   const searchRef = useRef<HTMLInputElement>(null)
+  const documentDirty = useRef(false)
+  const acceptedHash = useRef(window.location.hash)
+  const onDocumentDirty = useCallback((dirty: boolean) => { documentDirty.current = dirty }, [])
 
   useEffect(() => {
     localStorage.setItem('mak.sidebarCollapsed', collapsed ? '1' : '0')
@@ -47,7 +51,13 @@ export default function App() {
 
   // Hash → state: entity links navigate natively; this also covers back/forward.
   useEffect(() => {
-    const onHash = () => { setRoute(parseHash()); if (isDesktop) setCollapsed(true) }
+    const onHash = () => {
+      if (documentDirty.current && !window.confirm('Des modifications ne sont pas enregistrées. Quitter le document ? Le brouillon sera conservé.')) {
+        history.replaceState(null, '', `${location.pathname}${location.search}${acceptedHash.current}`); return
+      }
+      documentDirty.current = false; acceptedHash.current = location.hash
+      setRoute(parseHash()); if (isDesktop) setCollapsed(true)
+    }
     window.addEventListener('hashchange', onHash)
     return () => window.removeEventListener('hashchange', onHash)
   }, [])
@@ -72,10 +82,12 @@ export default function App() {
   }, [])
 
   useEffect(() => {
-    document.title = entity ? `Mr. Mak — ${entity.title}` : 'Mr. Mak — Workspace'
-  }, [entity])
+    document.title = route.module === 'knowledge' ? 'Knowledge Hub — Denoliane : Solas' : entity ? `Mr. Mak — ${entity.title}` : 'Mr. Mak — Workspace'
+  }, [entity, route.module])
 
   const goHome = useCallback(() => {
+    if (documentDirty.current && !window.confirm('Quitter le document sans enregistrer ? Le brouillon sera conservé.')) return
+    documentDirty.current = false; acceptedHash.current = ''
     history.pushState(null, '', window.location.pathname + window.location.search)
     setRoute({ id: null, step: -1 })
   }, [])
@@ -132,6 +144,7 @@ export default function App() {
         pinned={pinned}
         grouped={grouped}
         activeId={route.id}
+        activeModule={route.module}
         query={query}
         onQuery={setQuery}
         searchRef={searchRef}
@@ -166,7 +179,9 @@ export default function App() {
 
         <div className="content">
           <ReportBoundary key={reportUrl || 'home'} onHome={goHome}>
-          {entity && reportUrl && step?.viewer === 'card' ? (
+          {route.module === 'knowledge' ? (
+            <Suspense fallback={<div className="report-loading">Chargement du Knowledge Hub…</div>}><KnowledgeHub source={route.source} documentRef={route.ref} onDirty={onDocumentDirty} /></Suspense>
+          ) : entity && reportUrl && step?.viewer === 'card' ? (
             <Suspense fallback={<div className="report-loading">Opening card…</div>}><EditableCard key={`${entity.id}:${stepIndex}`} url={reportUrl} entityId={entity.id} step={stepIndex} /></Suspense>
           ) : entity && reportUrl && step?.viewer === 'compare3d' ? (
             <Suspense fallback={<div className="boot"><MakLogo size={56} animated={false} /></div>}><Compare3D
